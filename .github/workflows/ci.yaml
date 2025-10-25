@@ -37,7 +37,7 @@ jobs:
           python -m pip install pip-audit || true
           python -m pip_audit || true
 
-  deploy:
+    deploy:
     needs: ci
     if: github.ref == 'refs/heads/main'
     runs-on: self-hosted
@@ -45,8 +45,8 @@ jobs:
     env:
       APP_DIR: /opt/secure-app
       SERVICE_NAME: secure-app
-      SERVICE_USER: andrea         # <-- tu usuario de Ubuntu
-      MODULE: AppSegApps:app       # <-- tu módulo:objeto Flask
+      SERVICE_USER: andrea        # <-- tu usuario en Ubuntu
+      MODULE: AppSegApps:app
       BIND: 127.0.0.1:8000
       WORKERS: "2"
 
@@ -54,10 +54,11 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
+      # Ya no usamos sudo aquí porque la carpeta es tuya (lo hicimos una vez en la VM)
       - name: Ensure app dir ownership (safety)
         run: |
-          sudo mkdir -p "$APP_DIR"
-          sudo chown -R "$USER:$USER" "$APP_DIR"
+          mkdir -p "$APP_DIR"
+          chown -R "$USER:$USER" "$APP_DIR"
 
       - name: Sync code to $APP_DIR (skip .github and perms)
         run: |
@@ -69,7 +70,7 @@ jobs:
 
       - name: Create/Update systemd service
         run: |
-          sudo bash -c 'cat > /etc/systemd/system/${SERVICE_NAME}.service <<EOF
+          sudo -n bash -c 'cat > /etc/systemd/system/${SERVICE_NAME}.service <<EOF
           [Unit]
           Description=Secure Flask App (Gunicorn)
           After=network.target
@@ -84,7 +85,7 @@ jobs:
           [Install]
           WantedBy=multi-user.target
           EOF'
-          sudo systemctl daemon-reload
+          sudo -n systemctl daemon-reload
 
       - name: Create venv & install runtime deps
         run: |
@@ -96,10 +97,10 @@ jobs:
 
       - name: Enable & restart service
         run: |
-          sudo systemctl enable "${SERVICE_NAME}"
-          sudo systemctl restart "${SERVICE_NAME}"
-          systemctl --no-pager --full status "${SERVICE_NAME}" | head -n 30
+          sudo -n systemctl enable "${SERVICE_NAME}"
+          sudo -n systemctl restart "${SERVICE_NAME}"
+          sudo -n systemctl --no-pager --full status "${SERVICE_NAME}" | head -n 30
 
       - name: Health check (local)
         run: |
-          curl -sSf "http://127.0.0.1:8000/" | head -n 5 || (journalctl -u "${SERVICE_NAME}" -e --no-pager; exit 1)
+          curl -sSf "http://127.0.0.1:8000/" | head -n 5 || (sudo -n journalctl -u "${SERVICE_NAME}" -e --no-pager; exit 1)
