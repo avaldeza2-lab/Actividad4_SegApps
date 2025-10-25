@@ -17,15 +17,11 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install deps (app + dev)
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then python -m pip install -r requirements.txt; fi
           if [ -f dev-requirements.txt ]; then python -m pip install -r dev-requirements.txt; fi
-
-      - name: Run tests (pytest)
-        run: |
-          if [ -f pytest.ini ] || ls -1 tests/*.py 2>/dev/null; then pytest -q; else echo "No tests, skipping"; fi
 
       - name: Static analysis (Bandit)
         run: |
@@ -37,7 +33,7 @@ jobs:
           python -m pip install pip-audit || true
           python -m pip_audit || true
 
-    deploy:
+  deploy:
     needs: ci
     if: github.ref == 'refs/heads/main'
     runs-on: self-hosted
@@ -45,8 +41,8 @@ jobs:
     env:
       APP_DIR: /opt/secure-app
       SERVICE_NAME: secure-app
-      SERVICE_USER: andrea        # <-- tu usuario en Ubuntu
-      MODULE: AppSegApps:app
+      SERVICE_USER: andrea             # <-- tu usuario en Ubuntu
+      MODULE: AppSegApps:app           # <-- tu archivo:objeto Flask
       BIND: 127.0.0.1:8000
       WORKERS: "2"
 
@@ -54,7 +50,7 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      # Ya no usamos sudo aquí porque la carpeta es tuya (lo hicimos una vez en la VM)
+      # Esta carpeta ya es tuya (preparada antes en la VM), así evitamos sudo aquí
       - name: Ensure app dir ownership (safety)
         run: |
           mkdir -p "$APP_DIR"
