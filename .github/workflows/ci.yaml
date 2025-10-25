@@ -37,7 +37,7 @@ jobs:
           python -m pip install pip-audit || true
           python -m pip_audit || true
 
-  ddeploy:
+  deploy:
     needs: ci
     if: github.ref == 'refs/heads/main'
     runs-on: self-hosted
