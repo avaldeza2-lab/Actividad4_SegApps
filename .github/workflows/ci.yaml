@@ -37,15 +37,16 @@ jobs:
           python -m pip install pip-audit || true
           python -m pip_audit || true
 
-  deploy:
+  ddeploy:
     needs: ci
     if: github.ref == 'refs/heads/main'
-    runs-on: self-hosted   # <- tu runner en Ubuntu
+    runs-on: self-hosted
 
     env:
       APP_DIR: /opt/secure-app
       SERVICE_NAME: secure-app
-      MODULE: AppSegApps:app         # módulo:objeto Flask dentro de tu app
+      SERVICE_USER: andrea         # <-- tu usuario de Ubuntu
+      MODULE: AppSegApps:app       # <-- tu módulo:objeto Flask
       BIND: 127.0.0.1:8000
       WORKERS: "2"
 
@@ -53,10 +54,18 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Sync code to $APP_DIR
+      - name: Ensure app dir ownership (safety)
         run: |
-          mkdir -p "$APP_DIR"
-          rsync -az --delete --exclude ".git" ./ "$APP_DIR/"
+          sudo mkdir -p "$APP_DIR"
+          sudo chown -R "$USER:$USER" "$APP_DIR"
+
+      - name: Sync code to $APP_DIR (skip .github and perms)
+        run: |
+          rsync -az --delete \
+            --exclude ".git" \
+            --exclude ".github" \
+            --no-perms --no-owner --no-group \
+            ./ "$APP_DIR/"
 
       - name: Create/Update systemd service
         run: |
@@ -66,7 +75,7 @@ jobs:
           After=network.target
 
           [Service]
-          User=${USER}
+          User=${SERVICE_USER}
           WorkingDirectory=${APP_DIR}
           Environment="PATH=${APP_DIR}/.venv/bin"
           ExecStart=${APP_DIR}/.venv/bin/gunicorn -w ${WORKERS} -b ${BIND} ${MODULE}
@@ -83,7 +92,7 @@ jobs:
           . "${APP_DIR}/.venv/bin/activate"
           python -m pip install --upgrade pip
           if [ -f "${APP_DIR}/requirements.txt" ]; then pip install -r "${APP_DIR}/requirements.txt"; fi
-          pip install gunicorn
+          pip install gunicorn flask
 
       - name: Enable & restart service
         run: |
