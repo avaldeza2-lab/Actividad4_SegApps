@@ -66,7 +66,7 @@ jobs:
 
       - name: Create/Update systemd service
         run: |
-          sudo -n tee /etc/systemd/system/${SERVICE_NAME}.service >/dev/null <<'EOF'
+          sudo -n tee /etc/systemd/system/${SERVICE_NAME}.service >/dev/null <<EOF
           [Unit]
           Description=Secure Flask App (Gunicorn)
           After=network.target
@@ -74,7 +74,7 @@ jobs:
           [Service]
           User=${SERVICE_USER}
           WorkingDirectory=${APP_DIR}
-          Environment=PATH=${APP_DIR}/.venv/bin
+          Environment="PATH=${APP_DIR}/.venv/bin"
           ExecStart=${APP_DIR}/.venv/bin/gunicorn -w ${WORKERS} -b ${BIND} ${MODULE}
           Restart=always
 
