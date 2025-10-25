@@ -1,4 +1,4 @@
-name: CI
+name: CI/CD
 
 on:
   push:
@@ -23,13 +23,45 @@ jobs:
           python -m pip install -r requirements.txt -r dev-requirements.txt
 
       - name: Run tests
-        run: |
-          pytest -q
+        run: pytest -q
 
-      - name: Run Bandit (security scan)
-        run: |
-          python -m bandit -r . -ll --exclude venv,tests || true
+      - name: Bandit security scan
+        run: python -m bandit -r . -ll --exclude venv,tests || true
 
-      - name: Run pip-audit (dependency scan)
+      - name: Dependency audit
+        run: python -m pip_audit || true
+
+  deploy:
+    needs: ci
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup SSH
         run: |
-          python -m pip_audit || true
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H ${{ secrets.HOST }} >> ~/.ssh/known_hosts
+
+      - name: Upload source to server
+        run: |
+          rsync -az --delete --exclude ".git" ./ ${{ secrets.USER }}@${{ secrets.HOST }}:${{ secrets.TARGET_DIR }}
+
+      - name: Set up venv and install dependencies
+        env:
+          TARGET_DIR: ${{ secrets.TARGET_DIR }}
+        run: |
+          ssh ${{ secrets.USER }}@${{ secrets.HOST }} "
+            cd ${TARGET_DIR} && \
+            python3 -m venv .venv && \
+            . .venv/bin/activate && \
+            python -m pip install --upgrade pip && \
+            pip install -r requirements.txt gunicorn
+          "
+
+      - name: Restart service
+        run: |
+          ssh ${{ secrets.USER }}@${{ secrets.HOST }} "sudo systemctl daemon-reload && sudo systemctl enable secure-app && sudo systemctl restart secure-app && systemctl --no-pager --full status secure-app | head -n 30"
