@@ -17,58 +17,80 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
+      - name: Install deps (app + dev)
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt -r dev-requirements.txt
+          if [ -f requirements.txt ]; then python -m pip install -r requirements.txt; fi
+          if [ -f dev-requirements.txt ]; then python -m pip install -r dev-requirements.txt; fi
 
-      - name: Run tests
-        run: pytest -q
+      - name: Run tests (pytest)
+        run: |
+          if [ -f pytest.ini ] || ls -1 tests/*.py 2>/dev/null; then pytest -q; else echo "No tests, skipping"; fi
 
-      - name: Bandit security scan
-        run: python -m bandit -r . -ll --exclude venv,tests || true
+      - name: Static analysis (Bandit)
+        run: |
+          python -m pip install bandit || true
+          python -m bandit -r . -ll --exclude venv,tests || true
 
-      - name: Dependency audit
-        run: python -m pip_audit || true
+      - name: Dependency audit (pip-audit)
+        run: |
+          python -m pip install pip-audit || true
+          python -m pip_audit || true
 
   deploy:
     needs: ci
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: self-hosted   # <- tu runner en Ubuntu
 
     env:
-      SSH_PORT: "2222"  # porque usas NAT + port forwarding 2222 -> 22
+      APP_DIR: /opt/secure-app
+      SERVICE_NAME: secure-app
+      MODULE: AppSegApps:app         # módulo:objeto Flask dentro de tu app
+      BIND: 127.0.0.1:8000
+      WORKERS: "2"
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
-      - name: Setup SSH
+      - name: Sync code to $APP_DIR
         run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          # Aceptar la huella del host en el puerto 2222
-          ssh-keyscan -p "$SSH_PORT" -H ${{ secrets.HOST }} >> ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/known_hosts
+          mkdir -p "$APP_DIR"
+          rsync -az --delete --exclude ".git" ./ "$APP_DIR/"
 
-      - name: Upload source via rsync (port 2222)
+      - name: Create/Update systemd service
         run: |
-          rsync -az --delete --exclude ".git" -e "ssh -p $SSH_PORT" ./ ${{ secrets.USER }}@${{ secrets.HOST }}:${{ secrets.TARGET_DIR }}
+          sudo bash -c 'cat > /etc/systemd/system/${SERVICE_NAME}.service <<EOF
+          [Unit]
+          Description=Secure Flask App (Gunicorn)
+          After=network.target
 
-      - name: Python venv + deps (server side, port 2222)
-        env:
-          TARGET_DIR: ${{ secrets.TARGET_DIR }}
-        run: |
-          ssh -p "$SSH_PORT" ${{ secrets.USER }}@${{ secrets.HOST }} "
-            set -e
-            cd ${TARGET_DIR}
-            python3 -m venv .venv || true
-            . .venv/bin/activate
-            python -m pip install --upgrade pip
-            if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-            pip install gunicorn
-          "
+          [Service]
+          User=${USER}
+          WorkingDirectory=${APP_DIR}
+          Environment="PATH=${APP_DIR}/.venv/bin"
+          ExecStart=${APP_DIR}/.venv/bin/gunicorn -w ${WORKERS} -b ${BIND} ${MODULE}
+          Restart=always
 
-      - name: Restart service (port 2222)
+          [Install]
+          WantedBy=multi-user.target
+          EOF'
+          sudo systemctl daemon-reload
+
+      - name: Create venv & install runtime deps
         run: |
-          ssh -p "$SSH_PORT" ${{ secrets.USER }}@${{ secrets.HOST }} "sudo systemctl daemon-reload && sudo systemctl enable secure-app && sudo systemctl restart secure-app && systemctl --no-pager --full status secure-app | head -n 30"
+          python3 -m venv "${APP_DIR}/.venv" || true
+          . "${APP_DIR}/.venv/bin/activate"
+          python -m pip install --upgrade pip
+          if [ -f "${APP_DIR}/requirements.txt" ]; then pip install -r "${APP_DIR}/requirements.txt"; fi
+          pip install gunicorn
+
+      - name: Enable & restart service
+        run: |
+          sudo systemctl enable "${SERVICE_NAME}"
+          sudo systemctl restart "${SERVICE_NAME}"
+          systemctl --no-pager --full status "${SERVICE_NAME}" | head -n 30
+
+      - name: Health check (local)
+        run: |
+          curl -sSf "http://127.0.0.1:8000/" | head -n 5 || (journalctl -u "${SERVICE_NAME}" -e --no-pager; exit 1)
